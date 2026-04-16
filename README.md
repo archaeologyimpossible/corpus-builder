@@ -1,10 +1,10 @@
 # Photo Corpus Assembler
 
-A professional-grade research tool for acquiring web photography and performing local Computer Vision (CV) analysis to build structured datasets.
+A tool for acquiring web photography and performing local Computer Vision (CV) analysis to build structured datasets.
 
 ## Features
 
-- **Multi-Source Acquisition**: Search and collect imagery from Flickr Commons, Wikimedia Commons, and general web photography.
+- **Multi-Source Acquisition**: Search and collect imagery from Flickr Commons, Wikimedia Commons, and general web photography. More to come.
 - **Local CV Analysis**: Performs analysis directly in the browser using TensorFlow.js (no external AI APIs required for core tasks):
   - **Object Detection**: Identifies objects using the COCO-SSD model.
   - **Semantic Segmentation**: Identifies visual regions using the DeepLab model.
@@ -30,7 +30,7 @@ A professional-grade research tool for acquiring web photography and performing 
 
 ## Environment Setup
 
-Create a `.env` file in the root directory based on `.env.example`:
+For services requring a key, create a `.env` file in the root directory based on `.env.example`:
 
 ```env
 # Optional: Image Search API Keys (for Unsplash/Pexels integration)
@@ -60,7 +60,7 @@ To create a production-ready build:
    ```
 2. **Start the server**:
    ```bash
-   NODE_ENV=production npm start
+   npm start
    ```
 
 ## Troubleshooting
