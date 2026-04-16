@@ -16,7 +16,9 @@ import {
   Loader2, 
   ChevronRight, 
   Image as ImageIcon,
-  Archive
+  Archive,
+  Star,
+  Cpu
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { Button } from "@/components/ui/button";
@@ -30,7 +32,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { searchImages } from "./lib/api";
-import { analyzeImageCV } from "./lib/cv";
+import { analyzeImageCV, analyzeImageHighPrecision } from "./lib/cv";
 import { ImageMetadata, Corpus, CVAnalysis, SearchSource } from "./types";
 import JSZip from "jszip";
 
@@ -51,8 +53,11 @@ export default function App() {
   });
   const [selectedImage, setSelectedImage] = useState<ImageMetadata | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isAnalyzingHighPrecision, setIsAnalyzingHighPrecision] = useState(false);
   const [cvResult, setCvResult] = useState<CVAnalysis | null>(null);
   const [isExporting, setIsExporting] = useState(false);
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [tempName, setTempName] = useState(corpus.name);
   const [selectedSource, setSelectedSource] = useState<SearchSource>("web");
   const [hasSearched, setHasSearched] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
@@ -162,6 +167,42 @@ export default function App() {
     }
   };
 
+  const handleHighPrecisionAnalysis = async () => {
+    if (!selectedImage || isAnalyzingHighPrecision) return;
+    
+    // Only allow for images already in corpus
+    const corpusImage = corpus.images.find(img => img.id === selectedImage.id);
+    if (!corpusImage) {
+      toast.error("Please add the image to your corpus before running high precision analysis.");
+      return;
+    }
+
+    setIsAnalyzingHighPrecision(true);
+    try {
+      const results = await analyzeImageHighPrecision(selectedImage.url);
+      
+      const updatedAnalysis = { ...(selectedImage.cvAnalysis as CVAnalysis), ...results };
+
+      setCorpus(prev => ({
+        ...prev,
+        images: prev.images.map(img => 
+          img.id === selectedImage.id 
+            ? { ...img, cvAnalysis: updatedAnalysis }
+            : img
+        )
+      }));
+
+      // Update local view
+      setSelectedImage(prev => prev ? ({ ...prev, cvAnalysis: updatedAnalysis }) : null);
+
+      toast.success("High precision analysis complete.");
+    } catch (error) {
+      toast.error("High precision analysis failed.");
+    } finally {
+      setIsAnalyzingHighPrecision(false);
+    }
+  };
+
   const handleBulkAnalyze = async () => {
     const unanalyzed = corpus.images.filter(img => !img.cvAnalysis);
     if (unanalyzed.length === 0) {
@@ -241,7 +282,8 @@ export default function App() {
       const content = await zip.generateAsync({ type: "blob" });
       const downloadLink = document.createElement("a");
       downloadLink.href = URL.createObjectURL(content);
-      downloadLink.download = `${corpus.name.toLowerCase().replace(/\s+/g, '-')}_dataset.zip`;
+      const safeName = corpus.name.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-');
+      downloadLink.download = `${safeName}_dataset.zip`;
       document.body.appendChild(downloadLink);
       downloadLink.click();
       document.body.removeChild(downloadLink);
@@ -265,16 +307,60 @@ export default function App() {
             CORPUS ASSEMBLE v1.2
           </div>
           <div className="flex gap-6 items-center">
-            <div className="flex flex-col items-end">
-              <span className="data-label opacity-40">Active Project</span>
-              <span className="data-value">[{corpus.name.toUpperCase().replace(/\s+/g, '_')}]</span>
-            </div>
-            <div className="flex flex-col items-end">
-              <span className="data-label opacity-40">User</span>
-              <span className="data-value">RESEARCHER_01</span>
+            <div 
+              className="flex flex-col items-end cursor-pointer group"
+              onClick={() => {
+                setTempName(corpus.name);
+                setIsEditingName(true);
+              }}
+            >
+              <span className="data-label opacity-40 group-hover:opacity-100 transition-opacity">Active Project [Click to Rename]</span>
+              <span className="data-value border-b border-transparent group-hover:border-accent group-hover:text-accent transition-all">
+                [{corpus.name.toUpperCase().replace(/\s+/g, '_')}]
+              </span>
             </div>
           </div>
         </header>
+
+        <Dialog open={isEditingName} onOpenChange={setIsEditingName}>
+          <DialogContent className="sm:max-w-md bg-bg border-line rounded-none font-sans">
+            <DialogHeader>
+              <DialogTitle className="font-serif italic text-xl">Project Configuration</DialogTitle>
+              <DialogDescription className="text-xs uppercase tracking-tight opacity-60">
+                Update the identifier for this specialized research corpus.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="py-4">
+              <Input
+                defaultValue={corpus.name}
+                onChange={(e) => setTempName(e.target.value)}
+                className="rounded-none border-line focus-visible:ring-ink"
+                placeholder="Enter project name..."
+                autoFocus
+              />
+            </div>
+            <DialogFooter className="sm:justify-end gap-2">
+              <button
+                className="btn-hd px-4 py-2 border-line hover:bg-ink/5"
+                onClick={() => setIsEditingName(false)}
+              >
+                CANCEL
+              </button>
+              <button
+                className="btn-hd px-4 py-2 bg-ink text-bg"
+                onClick={() => {
+                  if (tempName.trim()) {
+                    setCorpus(prev => ({ ...prev, name: tempName.trim() }));
+                    setIsEditingName(false);
+                    toast.success("Project updated.");
+                  }
+                }}
+              >
+                SAVE_IDENTIFIER
+              </button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         {/* Sidebar */}
         <nav className="border-r border-line flex flex-col bg-bg overflow-y-auto">
@@ -570,6 +656,45 @@ export default function App() {
                       <span className="data-label">Dominant Mood</span>
                       <span className="data-value italic">{(selectedImage.cvAnalysis || cvResult).dominantMood}</span>
                     </div>
+
+                    {/* High Precision Analysis Section */}
+                    {corpus.images.find(img => img.id === selectedImage.id) && (
+                      <div className="pt-4 border-t border-line/10 flex flex-col gap-3">
+                        <div className="flex flex-col gap-1">
+                          <span className="data-label">High Precision Mode</span>
+                          <p className="text-[9px] opacity-40 leading-relaxed italic">
+                            High-fidelity SegFormer-B2 for detailed semantic parsing. Provides greater accuracy than base bulk models.
+                          </p>
+                        </div>
+                        
+                        {(selectedImage.cvAnalysis || cvResult).highPrecision ? (
+                          <div className="bg-ink/5 p-2 border border-line/10 flex flex-col gap-1.5">
+                            <div className="flex items-center gap-1.5 text-[9px] text-ink font-bold">
+                              <Star className="w-3 h-3 fill-ink text-ink" />
+                              PRECISION_MAPPING_READY
+                            </div>
+                            <div className="text-[8px] font-mono opacity-60 flex flex-col gap-0.5">
+                              <div>ENGINE: {(selectedImage.cvAnalysis || cvResult).highPrecision.model}</div>
+                              <div>LAYERS: {(selectedImage.cvAnalysis || cvResult).highPrecision.masksCount}</div>
+                              <div>COMPLETE: {new Date((selectedImage.cvAnalysis || cvResult).highPrecision.timestamp).toLocaleString()}</div>
+                            </div>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={handleHighPrecisionAnalysis}
+                            disabled={isAnalyzingHighPrecision}
+                            className="w-full py-2 bg-ink text-bg text-[10px] font-bold tracking-widest hover:opacity-90 disabled:opacity-30 transition-all flex items-center justify-center gap-2 shadow-sm"
+                          >
+                            {isAnalyzingHighPrecision ? (
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                            ) : (
+                              <Cpu className="w-3 h-3" />
+                            )}
+                            {isAnalyzingHighPrecision ? "PROCESSING_PRECISION..." : "RUN_HIGH_PRECISION_SEGMENTATION"}
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

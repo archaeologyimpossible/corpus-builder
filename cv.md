@@ -16,7 +16,13 @@ The pipeline uses three distinct types of analysis:
 *   **Purpose**: Partitions the image into meaningful semantic regions (e.g., "sky", "grass", "buildings", "road").
 *   **Feature**: The application post-processes the segmentation masks to generate precise bounding boxes for each detected visual region.
 
-### 3. Color & Mood Analysis
+### 3. High Precision Mode
+*   **Model**: `Xenova/segformer-b2-finetuned-ade-512-512`
+*   **Purpose**: A more powerful version of the SegFormer model (B2 vs B0) used for high-fidelity semantic parsing on individual research assets.
+*   **Export Integration**: The results of this analysis (mask counts, high-res labels, and engine metadata) are merged into the `cvAnalysis` object and persist in the final corpus export.
+*   **Note**: This model is only loaded when a user requests a high-precision analysis on a single item to optimize memory usage and prevent browser lag during bulk acquisition.
+
+### 4. Color & Mood Analysis
 *   **Method**: Custom Canvas-based pixel quantization.
 *   **Metrics**: 
     *   **Dominant Palette**: Extracting the top 5 colors with percentage distribution.

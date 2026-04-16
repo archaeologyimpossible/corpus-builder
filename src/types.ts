@@ -17,6 +17,11 @@ export interface CVAnalysis {
   segmentDetails?: { label: string; box_2d: [number, number, number, number] }[];
   dominantMood: string;
   hsv?: { h: number; s: number; v: number };
+  highPrecision?: {
+    model: string;
+    masksCount: number;
+    timestamp: string;
+  };
 }
 
 export type SearchSource = 'flickr' | 'wikimedia' | 'web' | 'museum' | 'unsplash' | 'pexels';

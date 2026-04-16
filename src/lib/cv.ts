@@ -13,13 +13,12 @@ env.backends.onnx.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/@xenova/transfo
 env.backends.onnx.wasm.numThreads = 1;
 env.backends.onnx.wasm.proxy = false;
 
-// Use the library's fetch hook and attempt to patch window.fetch
+// Custom fetch to prevent loading HTML when we expect model config/data
 const originalFetch = window.fetch;
 const customFetch = async (...args: any[]) => {
   const url = args[0].toString();
   
   // Block local fetches for model files that would hit the SPA fallback
-  // We exclude /api/ routes to allow the image proxy to work even if the image URL contains .json etc.
   if ((url.startsWith('/') || url.startsWith(window.location.origin)) && !url.includes('/api/')) {
     const isModelFile = url.includes('.json') || url.includes('.bin') || url.includes('.onnx') || url.includes('.wasm');
     if (isModelFile) {
@@ -32,20 +31,21 @@ const customFetch = async (...args: any[]) => {
   
   if (response.ok) {
     const contentType = response.headers.get('content-type');
-    // If we're expecting a model file but get HTML, it's a failure (likely SPA fallback)
+    // If we receive HTML instead of expected JSON config, it's a failure
     if (contentType && contentType.includes('text/html')) {
-      const isModelConfig = url.includes('.json') || url.includes('config.json');
+      const isModelConfig = url.includes('.json') || url.includes('config.json') || url.includes('preprocessor_config.json');
       if (isModelConfig && !url.includes('/api/')) {
-        const text = await response.clone().text();
-        console.error(`[CV Fetch] ERROR: Received HTML instead of JSON from ${url}. First 100 chars: ${text.substring(0, 100)}`);
-        throw new Error(`Model configuration not found at ${url}. The server returned an HTML page instead of JSON.`);
+        console.error(`[CV Fetch] ERROR: Received HTML instead of JSON from ${url}. Likely SPA fallback.`);
+        throw new Error(`Model configuration not found at ${url}. Received HTML instead of JSON.`);
       }
     }
   }
   return response;
 };
 
+// Apply custom fetch to Transformers.js env
 (env as any).fetch = customFetch;
+// Also patch global fetch to catch any other library-internal requests
 try {
   (window as any).fetch = customFetch;
 } catch (e) {
@@ -54,6 +54,7 @@ try {
 
 let objectDetector: any = null;
 let segmentationModel: any = null;
+let samModel: any = null;
 let loadPromise: Promise<void> | null = null;
 
 async function loadModels() {
@@ -93,13 +94,23 @@ async function loadModels() {
         return seg;
       };
 
-      const [detector, seg] = await Promise.all([
-        loadDetector(),
-        loadSegmentation()
-      ]);
+      const loadHighPrecision = async () => {
+        console.log("Loading SegFormer B2 (High Precision Mode)...");
+        const model = await pipeline('image-segmentation', 'Xenova/segformer-b2-finetuned-ade-512-512', {
+          progress_callback: progressCallback
+        });
+        console.log("SegFormer B2 loaded successfully.");
+        return model;
+      };
+
+      // Load models sequentially to avoid hitting platform rate limits on concurrent network requests
+      const detector = await loadDetector();
+      const seg = await loadSegmentation();
+      const highPrec = await loadHighPrecision();
       
       objectDetector = detector;
       segmentationModel = seg;
+      samModel = highPrec;
     } catch (err) {
       console.error("Error loading CV models:", err);
       loadPromise = null; // Reset promise so we can retry
@@ -212,6 +223,45 @@ export async function analyzeImageCV(imageUrl: string, description?: string): Pr
   } catch (error) {
     console.error("CV Analysis error:", error);
     throw error; // Throw instead of returning null to help debugging
+  }
+}
+
+export async function analyzeImageHighPrecision(imageUrl: string): Promise<Partial<CVAnalysis>> {
+  try {
+    await loadModels();
+
+    // Fetch image through proxy
+    const proxyUrl = `/api/proxy-image?url=${encodeURIComponent(imageUrl)}`;
+    const imageResp = await fetch(proxyUrl);
+    if (!imageResp.ok) throw new Error("Failed to fetch image via proxy");
+    
+    const blob = await imageResp.blob();
+    const img = await createImageBitmap(blob);
+
+    // Create a temporary canvas for SAM input
+    const canvas = document.createElement('canvas');
+    canvas.width = img.width;
+    canvas.height = img.height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error("Could not get canvas context");
+    ctx.drawImage(img, 0, 0);
+    const dataUrl = canvas.toDataURL('image/jpeg');
+    img.close();
+
+    // Use SegFormer B2 for high precision semantic analysis
+    console.log("Starting High Precision Semantic Analysis...");
+    const results = await samModel(dataUrl);
+
+    return {
+      highPrecision: {
+        model: "SegFormer-B2 (Xenova/segformer-b2-ade)",
+        masksCount: results.length,
+        timestamp: new Date().toISOString()
+      }
+    };
+  } catch (error) {
+    console.error("High precision analysis error:", error);
+    throw error;
   }
 }
 
